@@ -68,6 +68,7 @@ nav:
     - MuJoCo单足弹跳机器人简单仿真: './humanoid/mujoco_hopper_demo/index.md'
 - 肌肉骨骼人:
     - 肌肉骨骼人基础: './musculoskeletal/musculoskeletal_basics.md'
+    - 膝关节肌肉骨骼仿真与轨迹跟踪控制: './musculoskeletal/docs_musculoskeletal_knee_tracking.md'
 - 地面载具:
     - 手动控制: './set_up_and_connect_to_carla.md'
     - 生成对象: './ground/carla_spawn_objects.md'
@@ -81,7 +82,6 @@ nav:
     - rostopic 手动驱动: './ground/rostopic_cruise.md'
     - ROS Scenario Runner: './ground/ros_scenario_runner.md'
     - RVIZ Carla 插件: './ground/rviz_plugin.md'
-    - 停车场场景生成: './ground/carla_parking_lot.md'
     - 交通标志识别 ROS 封装: './ground/carla_tsr_ros.md'
     - 车辆键盘遥操作与二维模拟: './ground/vehicle_pygame_teleop.md'
     - 2D 小车目标追踪仿真: './ground/car_2d_target_tracker.md'
