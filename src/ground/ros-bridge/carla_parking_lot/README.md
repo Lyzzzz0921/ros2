@@ -16,12 +16,12 @@
 
 从官方 Release 页面下载 CARLA 0.9.16 Windows 版：
 [https://github.com/carla-simulator/carla/releases/tag/0.9.16](https://github.com/carla-simulator/carla/releases/tag/0.9.16)
-下载 `CARLA_0.9.16.zip`，解压到 `D:\carla` 目录。
+下载 `CARLA_0.9.16.zip`，解压到任意目录（记为 CARLA 安装目录）。
 
 ### 2. 启动 CARLA 服务端
 
 ```
-D:\carla\CarlaUE4.exe -quality-level=Low
+CarlaUE4.exe -quality-level=Low
 ```
 
 ### 3. 配置 Windows 防火墙
