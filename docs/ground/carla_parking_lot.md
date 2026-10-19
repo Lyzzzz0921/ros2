@@ -26,7 +26,17 @@ CarlaUE4.exe -quality-level=Low
 
 在 Windows Defender 防火墙中添加入站规则，放行 TCP 2000 和 UDP 2000 端口。
 
-### 4. 编译 ROS2 包
+### 4. 获取代码并编译 ROS2 包
+
+在 Ubuntu 客户端创建工作空间，并将仓库克隆到 src 目录：
+
+```
+mkdir -p ~/ros2_ws/src
+cd ~/ros2_ws/src
+git clone https://github.com/OpenHUTB/ros2.git
+```
+
+然后编译停车场模块：
 
 ```
 cd ~/ros2_ws
