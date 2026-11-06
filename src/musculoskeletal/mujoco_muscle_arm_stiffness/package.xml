@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>mujoco_muscle_arm_stiffness</name>
+  <version>0.1.0</version>
+  <description>
+    肌肉骨骼上肢（肩-肘）仿真：Hill 肌肉驱动两关节平面臂，覆盖单肌肉驱动、
+    三目标到达、双关节肱二头肌对比与重力前馈必要性四组实验。
+  </description>
+  <maintainer email="openhutb@example.com">OpenHUTB</maintainer>
+  <license>MIT</license>
+
+  <exec_depend>python3-numpy</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
