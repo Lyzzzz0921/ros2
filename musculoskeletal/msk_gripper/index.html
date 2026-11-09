@@ -124,6 +124,24 @@
     </li>
         </ul>
     </li>
+    <li class="toctree-l2"><a class="reference internal" href="#12-slam">12 夹爪移动底座的 SLAM 与神经导航</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#121">12.1 场景、运动与传感器</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#122">12.2 神经里程计与在线地图配准</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#123">12.3 神经价值迭代与运动控制</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#124">12.4 训练、测试与源码流程</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#125">12.5 三场景实际结果</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#126">12.6 复现入口</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#13">13 实验结论</a>
+    </li>
     </ul>
                 </li>
               </ul>
@@ -893,6 +911,275 @@ python3 -m unittest discover -s /ws/src/mujoco_muscle_gripper/tests
 <p>高度曲线与<a href="../msk_gripper_data/visual_closed_loop.csv">视觉闭环 CSV</a>使用同一时序数据：</p>
 <p><img alt="视觉控制的实际方块抬升曲线" src="../../img/msk_gripper/neural_visual_lift.png" /></p>
 <p>补充运行记录：<a href="../msk_gripper_data/docker_other_modes.log">模型自检、机械臂实验与动图入口</a>。三个补充 launch 进程正常退出，三段动图分别为 2.99、1.01、2.77 MB；结合前述记录，六种入口模式均完成容器运行。</p>
+<h2 id="12-slam">12 夹爪移动底座的 SLAM 与神经导航</h2>
+<h3 id="121">12.1 场景、运动与传感器</h3>
+<p>移动底座承载肌肉夹爪，在工作台、货架与转角工位之间行驶。底座通过编码器和二维激光持续估计自身位姿、建立未知环境地图，并根据更新后的地图前往指定工位，形成与夹爪抓取主题衔接的移动作业环节。本节实测环境为 <strong>Windows / Python 本机二维仿真</strong>；前述 Ubuntu / Humble 容器结果保持第 11 节的独立运行记录。</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>数值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>本机环境</td>
+<td>Python 3.11.8、PyTorch 2.5.1+cpu、SciPy 1.17.1</td>
+</tr>
+<tr>
+<td>工作区栅格</td>
+<td>32×32，分辨率 0.20 m</td>
+</tr>
+<tr>
+<td>底座半径 / 轮距</td>
+<td>0.13 m / 0.32 m</td>
+</tr>
+<tr>
+<td>控制周期</td>
+<td>0.15 s</td>
+</tr>
+<tr>
+<td>起点与目标</td>
+<td>起点 (1.0, 1.0, 0)，目标 (5.3, 5.3) m</td>
+</tr>
+<tr>
+<td>激光</td>
+<td>360° 共 96 束，最大量程 7.5 m，距离噪声标准差 0.007 m</td>
+</tr>
+<tr>
+<td>编码器</td>
+<td>左右比例偏差 1.07 / 0.94，独立噪声标准差 0.0015 m/s</td>
+</tr>
+</tbody>
+</table>
+<p>设左右轮线速度为 <script type="math/tex">v_L,v_R</script>，轮距为 <script type="math/tex">b</script>，则底座速度与角速度为：</p>
+<p>
+<script type="math/tex; mode=display">
+v=\frac{v_L+v_R}{2},\qquad \omega=\frac{v_R-v_L}{b}.
+</script>
+</p>
+<p><code>integrate()</code> 使用区间中点航向积分，<script type="math/tex">\bar\theta=\theta_t+\omega\Delta t/2</script>：</p>
+<p>
+<script type="math/tex; mode=display">
+x_{t+1}=x_t+v\Delta t\cos\bar\theta,\quad
+y_{t+1}=y_t+v\Delta t\sin\bar\theta,\quad
+\theta_{t+1}=\operatorname{wrap}(\theta_t+\omega\Delta t).
+</script>
+</p>
+<p><code>DifferentialWorld</code> 负责真实运动、碰撞检测和射线量测。在线估计器接收编码器、激光、已知初始位姿先验，导航器另接收指定目标坐标。真值轨迹和地图用于生成观测、离线监督与最终评价，在线定位、建图和规划均使用估计状态。</p>
+<h3 id="122">12.2 神经里程计与在线地图配准</h3>
+<p>编码器标定网络为 <strong>2–24–2</strong>，隐藏层采用 Tanh，把有偏编码器量测转换成左右轮速度。<code>ScanSlam.observe()</code> 先以网络校正后的轮速预测位姿，再把当前激光端点与上一时刻的占据地图配准，最后加入当前扫描：</p>
+<p>
+<script type="math/tex; mode=display">
+(\hat v_L,\hat v_R)=f_\phi(e_L,e_R),\qquad
+\hat p_t^-=\operatorname{integrate}(\hat p_{t-1},\hat v_L,\hat v_R).
+</script>
+</p>
+<p>地图配准使用历史占据栅格的距离场。设激光端点为 <script type="math/tex">q_i(p)</script>，距离场为 <script type="math/tex">D</script>，搜索目标为：</p>
+<p>
+<script type="math/tex; mode=display">
+J(p)=\frac{1}{n}\sum_i\min\{D(q_i(p)),0.45\}
++0.12\|p_{xy}-\hat p^-_{xy}\|_2
++0.08\left|\operatorname{wrap}(\theta-\hat\theta^-)\right|.
+</script>
+</p>
+<p>实现对 x、y 分别尝试 ±0.018 m、航向尝试 ±0.010 rad 的局部修正，接受降低代价的候选。当前扫描先与历史地图对齐，随后更新地图，避免用当前扫描给自身配准评分。</p>
+<p><code>OccupancyMap.update()</code> 沿激光射线标记自由栅格，对有效回波端点标记障碍。地图从未知状态开始，采用对数概率累积：</p>
+<p>
+<script type="math/tex; mode=display">
+L_t(c)=\operatorname{clip}\bigl(L_{t-1}(c)+\Delta L(c),-4,4\bigr).
+</script>
+</p>
+<p>射线经过的自由格取 <script type="math/tex">\Delta L=-0.35</script>，障碍端点取 <script type="math/tex">+0.95</script>，<script type="math/tex">L>0.65</script> 判为占据。达到最大量程的射线更新自由空间，未产生障碍端点；未被量测覆盖的格子继续保留未知状态。</p>
+<h3 id="123">12.3 神经价值迭代与运动控制</h3>
+<p><code>ValueIterationNetwork</code> 由 3×3 卷积（1→4 通道）、ReLU 和 1×1 卷积（4→1 通道）学习地图通行代价，再使用 Softplus 保证代价为正。四邻域移位、取最大值和减去通行代价构成递归 Bellman 层：</p>
+<p>
+<script type="math/tex; mode=display">
+c_\psi=\operatorname{softplus}(\operatorname{CNN}_\psi(M))+0.05,
+\qquad V^{k+1}(c)=\max_{a\in\mathcal N_4}V^k(c+a)-c_\psi(c).
+</script>
+</p>
+<p>每轮固定目标价值为 0、障碍价值为 −100，在当前 32×32 地图上递推 64 轮。在线输入为 SLAM 占据地图，障碍向外膨胀一格；从相邻可行方向中结合价值与转向代价选取局部目标。训练阶段的 BFS 距离场作为监督标签，在线动作由训练后的价值网络和运动网络计算。</p>
+<p>运动控制器为 <strong>4–40–24–2</strong> Tanh 网络。输入包含局部目标航向误差的正弦与余弦、归一化距离、前方激光净空，输出线速度与角速度：</p>
+<p>
+<script type="math/tex; mode=display">
+z_t=[\sin e_\theta,\cos e_\theta,\min(d,0.6)/0.6,\min(r_{\rm front},2)/2],
+\qquad (v_t,\omega_t)=g_\eta(z_t).
+</script>
+</p>
+<p>线速度限制在 0–0.38 m/s，角速度限制在 ±2.3 rad/s；大角度转向时先原地转向，前方距离小于 0.25 m 时停止前进。价值网络每四步或接近局部目标时更新方向，位姿和地图每步更新，因此建图、定位与导航在同一闭环内同步进行。</p>
+<h3 id="124">12.4 训练、测试与源码流程</h3>
+<p>随机种子为 21。标定与控制网络采用 Adam，学习率 0.012；价值网络采用 Adam，学习率 0.018。训练、验证和保留测试分别统计：</p>
+<table>
+<thead>
+<tr>
+<th>网络</th>
+<th>数据与划分</th>
+<th style="text-align: right;">训练轮数</th>
+<th style="text-align: right;">保留测试均方误差</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>编码器标定 2–24–2</td>
+<td>5120 对轮速样本；32 条完整序列按 22/5/5 划分</td>
+<td style="text-align: right;">160</td>
+<td style="text-align: right;">0.00001514 (m/s)²</td>
+</tr>
+<tr>
+<td>运动控制 4–40–24–2</td>
+<td>6000 个样本，4200/900/900 划分</td>
+<td style="text-align: right;">150</td>
+<td style="text-align: right;">0.0008348，两输出综合误差</td>
+</tr>
+<tr>
+<td>神经价值迭代</td>
+<td>20 张随机 12×12 训练地图，14/3/3 按整图划分</td>
+<td style="text-align: right;">35</td>
+<td style="text-align: right;">0.0007232，栅格距离平方</td>
+</tr>
+</tbody>
+</table>
+<p><img alt="移动底座三个网络的训练与验证曲线" src="../../img/msk_gripper/slam_training.png" /></p>
+<p>完整在线流程为：编码器、激光 → 神经轮速校正 → 位姿预测 → 历史地图配准 → 占据图更新 → 价值网络选择局部目标 → 运动网络输出速度 → 底座运动及新观测。</p>
+<table>
+<thead>
+<tr>
+<th>源码入口（<code>slam_navigation.py</code>）</th>
+<th>职责</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>DifferentialWorld.move_and_encode()</code>、<code>scan()</code></td>
+<td>差速运动、噪声编码器和二维激光观测</td>
+</tr>
+<tr>
+<td><code>train_models()</code>、<code>_fit_mlp()</code></td>
+<td>三个网络训练、验证及保留测试</td>
+</tr>
+<tr>
+<td><code>ScanSlam.observe()</code></td>
+<td>神经里程计预测和 scan-to-map 配准</td>
+</tr>
+<tr>
+<td><code>OccupancyMap.update()</code></td>
+<td>自由、障碍与未知栅格的增量更新</td>
+</tr>
+<tr>
+<td><code>ValueIterationNetwork.forward()</code>、<code>plan()</code></td>
+<td>神经 Bellman 递推与局部方向选择</td>
+</tr>
+<tr>
+<td><code>run_scene()</code></td>
+<td>同步建图、导航、速度控制和逐步记录</td>
+</tr>
+<tr>
+<td><code>benchmark()</code>、<code>make_plots()</code></td>
+<td>三场景验收、CSV/JSON、曲线和连续动图</td>
+</tr>
+</tbody>
+</table>
+<h3 id="125">12.5 三场景实际结果</h3>
+<p>本机完整训练与三场景仿真用时 <strong>7.36 s</strong>，验收字段 <code>passed=true</code>。到达条件按真实位置距目标小于 0.35 m 评价；位置 RMSE 是估计位置与真实位置之间欧氏误差的均方根。地图 IoU 按占据格的交集与并集计算，并同时给出已观测区域的 IoU。</p>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>到达 / 碰撞</th>
+<th style="text-align: right;">步数</th>
+<th style="text-align: right;">路径长度</th>
+<th style="text-align: right;">最终目标误差</th>
+<th style="text-align: right;">组合定位 RMSE</th>
+<th style="text-align: right;">原始里程计 RMSE</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>工作台绕行</td>
+<td>到达 / 0</td>
+<td style="text-align: right;">196</td>
+<td style="text-align: right;">7.190 m</td>
+<td style="text-align: right;">0.287 m</td>
+<td style="text-align: right;">0.097 m</td>
+<td style="text-align: right;">3.024 m</td>
+</tr>
+<tr>
+<td>双货架通道</td>
+<td>到达 / 0</td>
+<td style="text-align: right;">205</td>
+<td style="text-align: right;">7.683 m</td>
+<td style="text-align: right;">0.191 m</td>
+<td style="text-align: right;">0.098 m</td>
+<td style="text-align: right;">3.698 m</td>
+</tr>
+<tr>
+<td>转角工位</td>
+<td>到达 / 0</td>
+<td style="text-align: right;">185</td>
+<td style="text-align: right;">6.971 m</td>
+<td style="text-align: right;">0.176 m</td>
+<td style="text-align: right;">0.109 m</td>
+<td style="text-align: right;">3.478 m</td>
+</tr>
+</tbody>
+</table>
+<p>神经轮速校正与激光地图配准共同将三场景位置 RMSE 控制在 0.11 m 以内。下图对照真值工作区、实际轨迹与在线估计的地图、轨迹；浅灰色为尚未观测区域，深色为占据格：</p>
+<p><img alt="三个工作区的真实轨迹与在线 SLAM 地图" src="../../img/msk_gripper/slam_navigation.png" /></p>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th style="text-align: right;">全图占据 IoU</th>
+<th style="text-align: right;">已观测区域 IoU</th>
+<th style="text-align: right;">地图覆盖率</th>
+<th style="text-align: right;">有效地图配准次数</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>工作台绕行</td>
+<td style="text-align: right;">0.486</td>
+<td style="text-align: right;">0.603</td>
+<td style="text-align: right;">93.75%</td>
+<td style="text-align: right;">57</td>
+</tr>
+<tr>
+<td>双货架通道</td>
+<td style="text-align: right;">0.407</td>
+<td style="text-align: right;">0.616</td>
+<td style="text-align: right;">90.72%</td>
+<td style="text-align: right;">101</td>
+</tr>
+<tr>
+<td>转角工位</td>
+<td style="text-align: right;">0.478</td>
+<td style="text-align: right;">0.613</td>
+<td style="text-align: right;">94.63%</td>
+<td style="text-align: right;">78</td>
+</tr>
+</tbody>
+</table>
+<p><img alt="组合定位与原始里程计的位置误差曲线" src="../../img/msk_gripper/slam_errors.png" /></p>
+<p>动图由同一运行中记录的轨迹与在线地图快照组成，包含各场景到达画面，共 34 帧、298650 字节（0.299 MB），连续展示三种工作区的移动、绕障与地图更新：</p>
+<p><img alt="夹爪移动底座的同步建图与神经导航" src="../../img/msk_gripper/slam_navigation.gif" /></p>
+<p>原始记录：<a href="../msk_gripper_data/slam_metrics.json">完整指标 JSON</a>、<a href="../msk_gripper_data/slam_scene_1_trajectory.csv">工作台轨迹 CSV</a>、<a href="../msk_gripper_data/slam_scene_2_trajectory.csv">货架轨迹 CSV</a>、<a href="../msk_gripper_data/slam_scene_3_trajectory.csv">转角轨迹 CSV</a>、<a href="../msk_gripper_data/slam_summary.txt">中文运行摘要</a>。CSV 同时包含真值、SLAM、原始里程计、网络速度指令与逐时刻误差，可复核各项指标与曲线。</p>
+<h3 id="126">12.6 复现入口</h3>
+<p>进入 <code>src/musculoskeletal/mujoco_muscle_gripper</code>，安装包含 CPU 神经网络依赖的环境后运行：</p>
+<pre><code class="language-powershell">python3 -m pip install -r requirements-slam.txt
+python main.py slam --out out/slam --seed 21
+</code></pre>
+<p>独立模块入口与主脚本调用同一个 <code>benchmark()</code>：</p>
+<pre><code class="language-powershell">python -m mujoco_muscle_gripper.slam_navigation --out out/slam --seed 21
+</code></pre>
+<p>ROS 2 环境对应的 launch 入口为：</p>
+<pre><code class="language-bash">ros2 launch mujoco_muscle_gripper main.launch.py mode:=slam out:=/results/slam
+</code></pre>
+<p>本节记录的是 Windows / Python 本机运行，新增 SLAM 的三项测试全部通过，用时 2.95 s，覆盖观测边界、自由/障碍/未知栅格更新及场景净空可达性；第 11 节记录的 18 项测试和六种原有 launch 模式来自此前 Ubuntu / Humble 容器运行。两次记录分别保留，图表均与各自的原始数据对应。</p>
+<h2 id="13">13 实验结论</h2>
+<p>接触法向力由手指与方块之间的物理接触直接测得，激活与夹持力之间的映射同时受到肌肉动力学、弹簧回位和摩擦约束影响。基准扫描揭示了形成接触、维持摩擦和抬升负载三个环节的关系。</p>
+<p>力反馈网络在三个目标下的稳态平均绝对误差均小于 0.013 N；图像策略使用真实渲染像素生成肌肉激活，在给定抬升轨迹下将方块实际抬升 98.114 mm。移动底座的神经里程计、在线地图配准、神经价值迭代与运动控制完成三个工作区的同步建图导航，全部到达目标且碰撞为零。</p>
+<p>物理仿真与键盘操作、传感器反馈控制、SLAM 与导航、图像到控制四类任务形成完整的夹爪移动作业项目。原始 CSV、训练和闭环曲线、相机与地图图像、连续动图及运行记录共同构成可复核的实验链条。</p>
               
             </div>
           </div><footer>
